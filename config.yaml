@@ -1,0 +1,22 @@
+node:
+  role: "worker"
+  listen_port: 4001
+  external_ip: null
+  capabilities:
+    - "compute"
+    - "storage"
+  max_connections: 100
+  heartbeat_interval: 30
+
+network:
+  protocol_version: "p2p-network"
+  mesh_network: true
+  enable_mdns: true
+  enable_relay: true
+  connection_timeout: 30
+
+kubernetes: null
+
+relay_nodes: []
+bootstrap_nodes: []
+clusters: {}

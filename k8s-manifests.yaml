@@ -1,0 +1,379 @@
+# Kubernetes manifests for P2P Network in net-test namespace
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: p2p-network-config
+  namespace: net-test
+data:
+  config.yaml: |
+    node:
+      role: "worker"
+      listen_port: 4001
+      capabilities:
+        - "compute"
+        - "storage"
+      max_connections: 200
+      heartbeat_interval: 30
+    network:
+      protocol_version: "p2p-network"
+      mesh_network: true
+      enable_mdns: false
+      enable_relay: true
+      connection_timeout: 30
+    kubernetes:
+      namespace: "net-test"
+      service_name: "p2p-network"
+      headless_service: "p2p-network-headless"
+      cluster_name: "test-cluster"
+      cross_cluster_discovery: false
+    relay_nodes:
+      - "/dns/p2p-relay.net-test.svc.cluster.local/tcp/4001"
+    bootstrap_nodes:
+      - "/dns/p2p-bootstrap.net-test.svc.cluster.local/tcp/4001"
+    clusters:
+      test-cluster:
+        name: "test-cluster"
+        region: "local"
+        bootstrap_endpoints:
+          - "/dns/p2p-bootstrap.net-test.svc.cluster.local/tcp/4001"
+        relay_endpoints:
+          - "/dns/p2p-relay.net-test.svc.cluster.local/tcp/4001"
+        priority: 1
+  
+  config-bootstrap.yaml: |
+    node:
+      role: "bootstrap"
+      listen_port: 4001
+      capabilities:
+        - "bootstrap"
+        - "discovery"
+      max_connections: 500
+      heartbeat_interval: 10
+    network:
+      protocol_version: "p2p-network"
+      mesh_network: true
+      enable_mdns: false
+      enable_relay: false
+      connection_timeout: 60
+    kubernetes:
+      namespace: "net-test"
+      service_name: "p2p-bootstrap"
+      headless_service: "p2p-bootstrap-headless"
+      cluster_name: "test-cluster"
+      cross_cluster_discovery: false
+    relay_nodes: []
+    bootstrap_nodes: []
+    clusters: {}
+  
+  config-relay.yaml: |
+    node:
+      role: "relay"
+      listen_port: 4001
+      capabilities:
+        - "relay"
+        - "nat_traversal"
+      max_connections: 1000
+      heartbeat_interval: 15
+    network:
+      protocol_version: "p2p-network"
+      mesh_network: true
+      enable_mdns: false
+      enable_relay: true
+      connection_timeout: 45
+    kubernetes:
+      namespace: "net-test"
+      service_name: "p2p-relay"
+      headless_service: "p2p-relay-headless"
+      cluster_name: "test-cluster"
+      cross_cluster_discovery: false
+    relay_nodes: []
+    bootstrap_nodes:
+      - "/dns/p2p-bootstrap.net-test.svc.cluster.local/tcp/4001"
+    clusters: {}
+
+---
+# Headless Service for peer discovery
+apiVersion: v1
+kind: Service
+metadata:
+  name: p2p-network-headless
+  namespace: net-test
+  labels:
+    app: p2p-network
+spec:
+  clusterIP: None
+  selector:
+    app: p2p-network
+  ports:
+    - name: p2p
+      port: 4001
+      targetPort: 4001
+      protocol: TCP
+
+---
+# Bootstrap Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: p2p-bootstrap
+  namespace: net-test
+  labels:
+    app: p2p-network
+    role: bootstrap
+spec:
+  type: ClusterIP
+  selector:
+    app: p2p-network
+    role: bootstrap
+  ports:
+    - name: p2p
+      port: 4001
+      targetPort: 4001
+      protocol: TCP
+
+---
+# Relay Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: p2p-relay
+  namespace: net-test
+  labels:
+    app: p2p-network
+    role: relay
+spec:
+  type: ClusterIP
+  selector:
+    app: p2p-network
+    role: relay
+  ports:
+    - name: p2p
+      port: 4001
+      targetPort: 4001
+      protocol: TCP
+
+---
+# Bootstrap Node Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: p2p-bootstrap
+  namespace: net-test
+  labels:
+    app: p2p-network
+    role: bootstrap
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: p2p-network
+      role: bootstrap
+  template:
+    metadata:
+      labels:
+        app: p2p-network
+        role: bootstrap
+    spec:
+      containers:
+      - name: p2p-node
+        image: p2p-network:latest
+        imagePullPolicy: Never  # Use local image for testing
+        command: ["/app/p2p-node"]
+        args: ["--config", "/app/config-bootstrap.yaml"]
+        env:
+        - name: NODE_ROLE
+          value: "bootstrap"
+        - name: LISTEN_PORT
+          value: "4001"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: CLUSTER_NAME
+          value: "test-cluster"
+        - name: RUST_LOG
+          value: "info,libp2p_gossipsub=debug"
+        ports:
+        - containerPort: 4001
+          name: p2p
+          protocol: TCP
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+        - name: config
+          mountPath: /app/config-bootstrap.yaml
+          subPath: config-bootstrap.yaml
+        livenessProbe:
+          tcpSocket:
+            port: 4001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 4001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: p2p-network-config
+
+---
+# Relay Node Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: p2p-relay
+  namespace: net-test
+  labels:
+    app: p2p-network
+    role: relay
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: p2p-network
+      role: relay
+  template:
+    metadata:
+      labels:
+        app: p2p-network
+        role: relay
+    spec:
+      containers:
+      - name: p2p-node
+        image: p2p-network:latest
+        imagePullPolicy: Never  # Use local image for testing
+        command: ["/app/p2p-node"]
+        args: ["--config", "/app/config-relay.yaml"]
+        env:
+        - name: NODE_ROLE
+          value: "relay"
+        - name: LISTEN_PORT
+          value: "4001"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: CLUSTER_NAME
+          value: "test-cluster"
+        - name: RUST_LOG
+          value: "info,libp2p_gossipsub=debug"
+        ports:
+        - containerPort: 4001
+          name: p2p
+          protocol: TCP
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+        - name: config
+          mountPath: /app/config-relay.yaml
+          subPath: config-relay.yaml
+        livenessProbe:
+          tcpSocket:
+            port: 4001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: config
+        configMap:
+          name: p2p-network-config
+
+---
+# Worker Node Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: p2p-worker
+  namespace: net-test
+  labels:
+    app: p2p-network
+    role: worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: p2p-network
+      role: worker
+  template:
+    metadata:
+      labels:
+        app: p2p-network
+        role: worker
+    spec:
+      containers:
+      - name: p2p-node
+        image: p2p-network:latest
+        imagePullPolicy: Never  # Use local image for testing
+        command: ["/app/p2p-node"]
+        args: ["--config", "/app/config.yaml"]
+        env:
+        - name: NODE_ROLE
+          value: "worker"
+        - name: LISTEN_PORT
+          value: "4001"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: CLUSTER_NAME
+          value: "test-cluster"
+        - name: RUST_LOG
+          value: "info,libp2p_gossipsub=debug"
+        ports:
+        - containerPort: 4001
+          name: p2p
+          protocol: TCP
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+        livenessProbe:
+          tcpSocket:
+            port: 4001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 4001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: p2p-network-config
