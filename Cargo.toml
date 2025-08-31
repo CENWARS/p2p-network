@@ -1,0 +1,59 @@
+[package]
+name = "p2p-distributed-network"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "p2p-node"
+path = "src/main.rs"
+
+[dependencies]
+libp2p = { version = "0.53", features = [
+    "tokio", 
+    "tcp", 
+    "noise", 
+    "yamux", 
+    "gossipsub", 
+    "mdns", 
+    "dcutr", 
+    "relay", 
+    "identify", 
+    "ping", 
+    "kad",
+    "autonat",
+    "metrics",
+    "macros"
+] }
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+clap = { version = "4.0", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0"
+futures = "0.3"
+rand = "0.8"
+uuid = { version = "1.0", features = ["v4"] }
+async-std = "1.12"
+
+# Kubernetes integration
+kube = { version = "0.87", features = ["runtime", "derive"] }
+k8s-openapi = { version = "0.20", features = ["latest"] }
+
+# Monitoring and metrics
+prometheus = "0.13"
+hyper = { version = "0.14", features = ["full"] }
+
+# DNS resolution
+trust-dns-resolver = "0.23"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 1
