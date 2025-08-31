@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image
+      run: ./build.sh
+
+    - name: Create kind cluster
+      uses: helm/kind-action@v1.9.0
+      with:
+        cluster_name: p2p-test
+
+    - name: Load image to kind
+      run: kind load docker-image p2p-network:latest --name p2p-test
+
+    - name: Create namespace
+      run: kubectl create namespace net-test
+
+    - name: Deploy to Kubernetes
+      run: kubectl apply -f k8s-manifests.yaml -n net-test
+
+    - name: Wait for deployments
+      run: |
+        kubectl wait --for=condition=available deployment/p2p-bootstrap -n net-test
+        kubectl wait --for=condition=available deployment/p2p-relay -n net-test
+        kubectl wait --for=condition=available deployment/p2p-worker -n net-test
+
+    - name: Run tests
+      run: ./test.sh
+
+    - name: Run stress tests
+      run: |
+        export TEST_DURATION=60
+        export SCALE_UP_WORKERS=3
+        ./stress-test.sh
+
+    - name: Clean up
+      if: always()
+      run: |
+        kubectl delete namespace net-test --ignore-not-found=true
+        kind delete cluster --name p2p-test
